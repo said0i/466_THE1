@@ -174,44 +174,34 @@ def desert_or_forest(img):
 def difference_images(img1, img2):
     '''img1 and img2 are the images to take dhe difference
     returns the masked image'''
-    if(len(img1.shape) == 2):#grayscale
-        # Compute the absolute difference directly
-        diff = cv2.absdiff(img1, img2)
-        '''
-        #create a mask where different pixels are 1 and others are 0
-        mask = np.where(diff > 75, 1, 0)
-        #apply the mask
-        masked_image = (mask * img2).astype(np.uint8)
-        ret,thresh = cv2.threshold(diff,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
-        #ret,thresholding=cv2.threshold(diff, 0, 255,cv2.THRESH_BINARY)
-        #return thresh
-        return masked_image
-        '''
-        diff = diff.astype(np.uint8)
-        # Use Otsu's method on the difference to get an adaptive threshold
-        ret, k = cv2.threshold(diff, 0, 255, cv2.THRESH_OTSU)
-        # Create a mask where the significant differences (above the threshold) are kept
-        mask = np.where(diff > ret, 1, 0).astype(np.uint8)
-        
-        # Apply the mask to one of the original images to extract the object
-        masked_image = (mask * img2).astype(np.uint8)
-        inverse_masked_image = 255-masked_image
-        ret2, thresh = cv2.threshold(inverse_masked_image,0, 255, cv2.THRESH_OTSU)
-        mask2 = np.where(inverse_masked_image < ret2, 1, 0).astype(np.uint8)
-        
-        final_image = (mask2 * img2).astype(np.uint8)
-        return k
 
-    else:#rgb
-        # Compute the absolute difference for each channel
-        diff_r = cv2.absdiff(img1[:, :, 2], img2[:, :, 2])
-        diff_g = cv2.absdiff(img1[:, :, 1], img2[:, :, 1])
-        diff_b = cv2.absdiff(img1[:, :, 0], img2[:, :, 0])
-        # Create a mask where different pixels are 1 and others are 0
-        mask = np.where((diff_r > 25) | (diff_g > 25) | (diff_b > 25), 1, 0)
-        # Apply the mask
-        masked_image = np.stack((mask * img2[:, :, 2], mask * img2[:, :, 1], mask * img2[:, :, 0]), axis=-1)
-        return masked_image
+    if len(img1.shape) < 3 or img1.shape[2] == 1: # Grayscale
+        diff = cv2.absdiff(img1, img2)
+        mask = np.where(diff > 75, 1, 0)
+        masked_image = mask * img2
+        _, masked_image = cv2.threshold(masked_image.astype(np.uint8), 120, 255, cv2.THRESH_TOZERO_INV) # Remove unnecessary differences other than the object
+    else: # RGB
+        hsv1 = cv2.cvtColor(img1, cv2.COLOR_BGR2HSV)
+        hsv2 = cv2.cvtColor(img2, cv2.COLOR_BGR2HSV)
+
+        h1, s1, i1 = hsv1[:, :, 0], hsv1[:, :, 1], hsv1[:, :, 2]
+        h2, s2, i2 = hsv2[:, :, 0], hsv2[:, :, 1], hsv2[:, :, 2]
+
+        h_diff = cv2.absdiff(h1, h2)
+        s_diff = cv2.absdiff(s1, s2)
+        i_diff = cv2.absdiff(i1, i2)
+
+        h_mask = np.where((h_diff > 160) & (h_diff < 170), 1, 0).astype(np.uint8)
+        s_mask = np.where((s_diff < 100), 1, 0).astype(np.uint8)
+        i_mask = np.where((i_diff > 80), 1, 0).astype(np.uint8)
+
+        mask = np.logical_and(s_mask, i_mask).astype(np.uint8)
+        mask = np.logical_and(mask, h_mask).astype(np.uint8)
+        mask = np.repeat(mask[:, :, np.newaxis], 3, axis=2)
+        
+        masked_image = img2 * mask
+
+    return masked_image
 
 if __name__ == '__main__':
     ###################### Q1
