@@ -41,25 +41,15 @@ def rotate_upsample(img, scale, degree, interpolation_type):
     else:
         # Upsample the image using INTER_CUBIC (higher quality for enlarging)
         upsampled_image = cv2.resize(aligned_image, (new_width, new_height), interpolation=cv2.INTER_CUBIC)
-    #return upsampled_image
-    '''
-    #cropping
-    #crop unnecessary parts due to rotation
-    cos=abs(np.cos(np.radians(degree)))
-    sin=abs(np.sin(np.radians(degree)))
-    sum=cos+sin
-    actual_width = (new_height*sin - new_width*cos) / (sin**2 - cos**2)
-    actual_height = (new_width*sin - new_height*cos) / (sin**2 - cos**2)
+    return upsampled_image
 
-    wfloor = int(((new_width - actual_width) + 2)// 2)
-    wceil = int((new_width + actual_width) // 2 )
-    hfloor = int(((new_height - actual_height) + 2)// 2)
-    hceil = int((new_height + actual_height) // 2 )
-    cropped_image = upsampled_image[wfloor:wceil,hfloor:hceil]
-    return cropped_image
-    '''
-def compute_distance(img1, img2):
-    distance = np.mean((img1 - img2) ** 2)
+def compute_distance(original, corrected):
+    h1, w1, _ = original.shape
+    h2, w2, _ = corrected.shape
+    # The size of the corrected image is bigger due to black outer region coming from rotation.
+    # In order to calculate distance, we have to make the sizes of the images equal.
+    corrected = corrected[(h2-h1)//2:(h2+h1)//2 , (w2-w1)//2:(w2+w1)//2]
+    distance = np.mean((original - corrected) ** 2)
     return distance
 
 def rgb_to_hsi(image):
@@ -87,7 +77,7 @@ def rgb_to_hsi(image):
 def compute_kl_divergence(hist1, hist2):
     pixel_count= hist1.sum()
     # Only compute log for non-zero entries in hist1
-    kl_divergence = np.sum(np.where(hist1 != 0, (hist1/pixel_count) * np.log(hist1 / (hist2 + 1e-9)), 0))
+    kl_divergence = np.sum(np.where(hist1 != 0, (hist1/pixel_count) * np.log((hist1 + 1e-10) / (hist2 + 1e-10)), 0))
     return kl_divergence
 
 def desert_or_forest(img):
@@ -155,18 +145,8 @@ def desert_or_forest(img):
     plt.legend()
     plt.savefig(output_folder + 'forest2_histogram.png')
     plt.close()
-    '''
-    desert1_hist = desert1_hist / np.sum(desert1_hist)
-    desert2_hist = desert2_hist / np.sum(desert2_hist)
-    forest1_hist = forest1_hist / np.sum(forest1_hist)
-    forest2_hist = forest2_hist / np.sum(forest2_hist)
-    '''
-    kl_div_deserts = compute_kl_divergence(desert1_hist, desert2_hist)
-    kl_div_forests = compute_kl_divergence(forest1_hist, forest2_hist)
-    kl_div_desert_forest1 = compute_kl_divergence(desert1_hist, forest1_hist)
-    kl_div_desert_forest2 = compute_kl_divergence(desert2_hist, forest1_hist)
-    kl_div_desert_forest3 = compute_kl_divergence(desert1_hist, forest2_hist)
-    kl_div_desert_forest4 = compute_kl_divergence(desert2_hist, forest2_hist)
+    
+    
     # Compute KL Divergence between the histograms
     
     kl_div_desert1 = compute_kl_divergence(desert1_hist, img_hist)
@@ -180,23 +160,60 @@ def desert_or_forest(img):
     else:
         result = 'forest'
 
+    plt.figure()
+    plt.plot(img_hist, label=result + '_input')
+    plt.title(result + '_input ' + 'Hue Histogram')
+    plt.xlabel('Pixel Value')
+    plt.ylabel('Frequency')
+    plt.legend()
+    plt.savefig(output_folder + result + '_input'+ '_histogram.png')
+    plt.close()
+
     return result
 
 def difference_images(img1, img2):
     '''img1 and img2 are the images to take dhe difference
     returns the masked image'''
-    #masked_image = cv2.absdiff(img2, img1)
+    if(len(img1.shape) == 2):#grayscale
+        # Compute the absolute difference directly
+        diff = cv2.absdiff(img1, img2)
+        '''
+        #create a mask where different pixels are 1 and others are 0
+        mask = np.where(diff > 75, 1, 0)
+        #apply the mask
+        masked_image = (mask * img2).astype(np.uint8)
+        ret,thresh = cv2.threshold(diff,0,255,cv2.THRESH_BINARY+cv2.THRESH_OTSU)
+        #ret,thresholding=cv2.threshold(diff, 0, 255,cv2.THRESH_BINARY)
+        #return thresh
+        return masked_image
+        '''
+        diff = diff.astype(np.uint8)
+        # Use Otsu's method on the difference to get an adaptive threshold
+        ret, k = cv2.threshold(diff, 0, 255, cv2.THRESH_OTSU)
+        # Create a mask where the significant differences (above the threshold) are kept
+        mask = np.where(diff > ret, 1, 0).astype(np.uint8)
+        
+        # Apply the mask to one of the original images to extract the object
+        masked_image = (mask * img2).astype(np.uint8)
+        inverse_masked_image = 255-masked_image
+        ret2, thresh = cv2.threshold(inverse_masked_image,0, 255, cv2.THRESH_OTSU)
+        mask2 = np.where(inverse_masked_image < ret2, 1, 0).astype(np.uint8)
+        
+        final_image = (mask2 * img2).astype(np.uint8)
+        return k
 
-    # Compute the absolute difference directly
-    diff = cv2.absdiff(img1, img2)
-    #create a mask where different pixels are 1 and others are 0
-    mask = np.where(diff > 75, 1, 0)
-    #apply the mask
-    masked_image = mask * img2
-    return masked_image
+    else:#rgb
+        # Compute the absolute difference for each channel
+        diff_r = cv2.absdiff(img1[:, :, 2], img2[:, :, 2])
+        diff_g = cv2.absdiff(img1[:, :, 1], img2[:, :, 1])
+        diff_b = cv2.absdiff(img1[:, :, 0], img2[:, :, 0])
+        # Create a mask where different pixels are 1 and others are 0
+        mask = np.where((diff_r > 25) | (diff_g > 25) | (diff_b > 25), 1, 0)
+        # Apply the mask
+        masked_image = np.stack((mask * img2[:, :, 2], mask * img2[:, :, 1], mask * img2[:, :, 0]), axis=-1)
+        return masked_image
 
 if __name__ == '__main__':
-    '''
     ###################### Q1
     # Read original image
     img_original = read_image('q1_1.png')
@@ -210,8 +227,8 @@ if __name__ == '__main__':
     write_image(corrected_img_cubic, 'q1_1_corrected_cubic.png')
 
     # Report the distances
-    #print('The distance between original image and image corrected with linear interpolation is ', compute_distance(img_original, corrected_img_linear))
-    #print('The distance between original image and image corrected with cubic interpolation is ', compute_distance(img_original, corrected_img_cubic))
+    print('The distance between original image and image corrected with linear interpolation is ', compute_distance(img_original, corrected_img_linear))
+    print('The distance between original image and image corrected with cubic interpolation is ', compute_distance(img_original, corrected_img_cubic))
 
     # Repeat the same steps for the second image
     img_original = read_image('q1_2.png')
@@ -224,8 +241,6 @@ if __name__ == '__main__':
     # Report the distances
     print('The distance between original image and image corrected with linear interpolation is ', compute_distance(img_original, corrected_img_linear))
     print('The distance between original image and image corrected with cubic interpolation is ', compute_distance(img_original, corrected_img_cubic))
-    '''
-    '''
     ###################### Q2
     img = read_image('q2_1.jpg')
     result = desert_or_forest(img)
@@ -235,7 +250,7 @@ if __name__ == '__main__':
     result = desert_or_forest(img)
     print("Given image q2_2 is an image of a ", result)
 
-    '''
+    
     ###################### Q3
     img1 = read_image('q3_a1.png',gray_scale=True)
     img2 = read_image('q3_a2.png',gray_scale=True)
