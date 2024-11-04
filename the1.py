@@ -1,3 +1,6 @@
+# Student1 Name: Ahmed Said Gençkol Student1 ID: 2539377
+# Student2 Name: Batuhan Teberoğu Student2 ID: 2581056
+
 import numpy as np
 import cv2 
 import matplotlib.pyplot as  plt
